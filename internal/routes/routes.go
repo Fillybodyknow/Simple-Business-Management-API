@@ -22,6 +22,7 @@ func SetRoutes(db *mongo.Client) *gin.Engine {
 		auth := api.Group("/auth")
 		{
 			auth.POST("/register", AuthHandle.Register)
+			auth.POST("/login", AuthHandle.Login)
 		}
 	}
 
