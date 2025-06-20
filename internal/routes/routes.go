@@ -16,13 +16,19 @@ func SetRoutes(db *mongo.Client) *gin.Engine {
 	})
 
 	UserCollection := db.Database("Simple-Business-Management").Collection("users")
+	ProductCollection := db.Database("Simple-Business-Management").Collection("products")
 	AuthHandle := handlers.NewAuthHandle(UserCollection)
+	ProductHandle := handlers.NewProductHandle(ProductCollection)
 	api := r.Group("/api")
 	{
 		auth := api.Group("/auth")
 		{
 			auth.POST("/register", AuthHandle.Register)
 			auth.POST("/login", AuthHandle.Login)
+		}
+		product := api.Group("/product")
+		{
+			product.GET("/", ProductHandle.GetProducts)
 		}
 	}
 
