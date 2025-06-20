@@ -3,6 +3,7 @@ package routes
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/simple-business-management-api/go-backend-api/internal/handlers"
+	"github.com/simple-business-management-api/go-backend-api/internal/middleware"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -29,6 +30,11 @@ func SetRoutes(db *mongo.Client) *gin.Engine {
 		product := api.Group("/product")
 		{
 			product.GET("/", ProductHandle.GetProducts)
+		}
+		productMiddleware := api.Group("/product")
+		productMiddleware.Use(middleware.AuthMiddleware())
+		{
+			productMiddleware.POST("/", ProductHandle.CreateProduct)
 		}
 	}
 
