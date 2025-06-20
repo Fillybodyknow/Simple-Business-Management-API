@@ -35,7 +35,7 @@ func SetRoutes(db *mongo.Client) *gin.Engine {
 		productMiddleware.Use(middleware.AuthMiddleware())
 		{
 			productMiddleware.POST("/", ProductHandle.CreateProduct)
-			productMiddleware.PUT("/:product_id", ProductHandle.UpdateProduct)
+			productMiddleware.PUT("", ProductHandle.UpdateProduct)
 		}
 	}
 

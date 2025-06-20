@@ -13,10 +13,18 @@ import (
 )
 
 type ProductRequest struct {
-	ProductName string  `json:"product_name" binding:"required"`
-	SKU         string  `json:"sku" binding:"required"`
-	Price       float64 `json:"price" binding:"required"`
-	Stock       int     `json:"stock" binding:"required"`
+	ProductName string  `json:"product_name" form:"product_name" binding:"required"`
+	SKU         string  `json:"sku" form:"sku" binding:"required"`
+	Price       float64 `json:"price" form:"price" binding:"required"`
+	Stock       int     `json:"stock" form:"stock" binding:"required"`
+}
+
+type UpdateProductRequest struct {
+	ProductName string  `json:"product_name" form:"product_name"`
+	SKU         string  `json:"sku" form:"sku"`
+	Price       float64 `json:"price" form:"price"`
+	Stock       int     `json:"stock" form:"stock"`
+	IsActive    bool    `json:"is_active" form:"is_active"`
 }
 type ProductHandle struct {
 	ProductCollection *mongo.Collection
@@ -75,7 +83,7 @@ func (h *ProductHandle) CreateProduct(c *gin.Context) {
 	}
 
 	var input ProductRequest
-	if err := c.ShouldBindJSON(&input); err != nil {
+	if err := c.ShouldBind(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -109,22 +117,26 @@ func (h *ProductHandle) UpdateProduct(c *gin.Context) {
 		return
 	}
 
-	productIDParam := c.Param("product_id")
-	productID, err := primitive.ObjectIDFromHex(productIDParam)
+	productIDStr := c.Query("id")
+	if productIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing product ID"})
+		return
+	}
+	productID, err := primitive.ObjectIDFromHex(productIDStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product ID"})
 		return
 	}
 
-	var input = models.Product{}
-	if err := c.ShouldBindJSON(&input); err != nil {
+	var input = UpdateProductRequest{}
+	if err := c.ShouldBind(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	update := bson.M{
 		"$set": bson.M{
-			"name":      input.Name,
+			"name":      input.ProductName,
 			"sku":       input.SKU,
 			"price":     input.Price,
 			"stock":     input.Stock,
