@@ -98,3 +98,49 @@ func (h *ProductHandle) CreateProduct(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{"message": "Product created successfully"})
 }
+
+func (h *ProductHandle) UpdateProduct(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	roleVar, _ := c.Get("role")
+	if roleVar != "Admin" && roleVar != "Staff" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only staff/admin can update products"})
+		return
+	}
+
+	productIDParam := c.Param("product_id")
+	productID, err := primitive.ObjectIDFromHex(productIDParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product ID"})
+		return
+	}
+
+	var input = models.Product{}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"name":      input.Name,
+			"sku":       input.SKU,
+			"price":     input.Price,
+			"stock":     input.Stock,
+			"is_active": input.IsActive,
+		},
+	}
+
+	resulf, err := h.ProductCollection.UpdateOne(ctx, bson.M{"_id": productID}, update)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+	if resulf.MatchedCount == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Product updated successfully"})
+}
