@@ -156,3 +156,68 @@ func (h *ProductHandle) UpdateProduct(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Product updated successfully"})
 }
+
+func (h *ProductHandle) DeleteProduct(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	roleVar, _ := c.Get("role")
+	productIDStr := c.Query("id")
+	if productIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing product ID"})
+		return
+	}
+
+	productID, err := primitive.ObjectIDFromHex(productIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product ID"})
+		return
+	}
+
+	switch roleVar {
+	case "Staff":
+		userIdVar, _ := c.Get("userId")
+		userIDStr, ok := userIdVar.(string)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID type"})
+			return
+		}
+
+		userID, err := primitive.ObjectIDFromHex(userIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID format"})
+			return
+		}
+
+		filter := bson.M{"_id": productID, "created_by": userID}
+		result, err := h.ProductCollection.DeleteOne(ctx, filter)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			return
+		}
+		if result.DeletedCount == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found or permission denied"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Product deleted successfully"})
+		return
+
+	case "Admin":
+		result, err := h.ProductCollection.DeleteOne(ctx, bson.M{"_id": productID})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			return
+		}
+		if result.DeletedCount == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Product deleted successfully"})
+		return
+
+	default:
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only staff/admin can delete products"})
+	}
+}

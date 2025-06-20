@@ -36,6 +36,7 @@ func SetRoutes(db *mongo.Client) *gin.Engine {
 		{
 			productMiddleware.POST("/", ProductHandle.CreateProduct)
 			productMiddleware.PUT("", ProductHandle.UpdateProduct)
+			productMiddleware.DELETE("", ProductHandle.DeleteProduct)
 		}
 	}
 
