@@ -8,6 +8,7 @@ import (
 
 type Product struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty"`
+	CreatedBy primitive.ObjectID `bson:"created_by"`
 	Name      string             `bson:"name"`
 	SKU       string             `bson:"sku"`
 	Price     float64            `bson:"price"`
