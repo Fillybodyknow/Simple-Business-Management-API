@@ -32,7 +32,7 @@
 
 ```bash
 # 1. Clone the project
-git clone https://github.com/yourusername/simple-business-management-api.git
+git clone https://github.com/Fillybodyknow/simple-business-management-api.git
 cd simple-business-management-api
 
 # 2. Create .env file
