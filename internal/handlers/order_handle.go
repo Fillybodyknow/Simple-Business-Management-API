@@ -360,3 +360,60 @@ func (h *OrderHandle) UpdateOrder(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Order updated successfully"})
 }
+
+func (h *OrderHandle) DeleteOrder(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	// รับ user ID จาก context
+	userIdVar, _ := c.Get("userId")
+	userIDStr, ok := userIdVar.(string)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID type"})
+		return
+	}
+
+	CreateBy, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
+		return
+	}
+
+	roleVar, _ := c.Get("role")
+
+	orderID := c.Query("id")
+	if orderID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing order ID"})
+		return
+	}
+
+	orderIDHex, err := primitive.ObjectIDFromHex(orderID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid order ID"})
+		return
+	}
+
+	filter := bson.M{"_id": orderIDHex}
+	if roleVar == "Staff" {
+		filter["$or"] = []bson.M{
+			{"created_by": CreateBy},
+			{"created_by": bson.M{"$exists": false}},
+		}
+	} else if roleVar != "Admin" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized access"})
+		return
+	}
+
+	res, err := h.OrderCollection.DeleteOne(ctx, filter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete order"})
+		return
+	}
+
+	if res.DeletedCount == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found or permission denied"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Order deleted successfully"})
+}
