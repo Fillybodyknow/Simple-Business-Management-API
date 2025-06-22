@@ -46,7 +46,6 @@ func (h *OrderHandle) CreatePublicOrder(c *gin.Context) {
 		return
 	}
 
-	// 🔍 ดึงหรือสร้างลูกค้า
 	var customer models.Customer
 	err := h.CustomerCollection.FindOne(ctx, bson.M{"email": input.CustomerEmail}).Decode(&customer)
 	if err == mongo.ErrNoDocuments {
@@ -110,7 +109,108 @@ func (h *OrderHandle) CreatePublicOrder(c *gin.Context) {
 		return
 	}
 
-	// 📦 หัก stock ของทุกสินค้า
+	for _, item := range input.Items {
+		productID, _ := primitive.ObjectIDFromHex(item.ProductID)
+		_, err := h.ProductCollection.UpdateOne(ctx,
+			bson.M{"_id": productID},
+			bson.M{"$inc": bson.M{"stock": -item.Quantity}},
+		)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update stock"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "Order placed successfully"})
+}
+
+func (h *OrderHandle) CreateOrders(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	var input OrderRequest
+	if err := c.ShouldBind(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userIdVar, _ := c.Get("userId")
+	Create_by, _ := primitive.ObjectIDFromHex(userIdVar.(string))
+	if Create_by == primitive.NilObjectID {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	RoleVar, _ := c.Get("role")
+	if RoleVar != "Admin" && RoleVar != "Staff" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only staff/admin can create orders"})
+		return
+	}
+
+	var customer models.Customer
+	err := h.CustomerCollection.FindOne(ctx, bson.M{"email": input.CustomerEmail}).Decode(&customer)
+	if err == mongo.ErrNoDocuments {
+		customer = models.Customer{
+			FullName:  input.CustomerFullName,
+			Email:     input.CustomerEmail,
+			Phone:     input.CustomerPhone,
+			Address:   input.CustomerAddress,
+			CreatedAt: time.Now(),
+		}
+		result, err := h.CustomerCollection.InsertOne(ctx, customer)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create customer"})
+			return
+		}
+		customer.ID = result.InsertedID.(primitive.ObjectID)
+	}
+
+	var orderItems []models.OrderItem
+	var totalAmount float64
+
+	for _, item := range input.Items {
+		productID, err := primitive.ObjectIDFromHex(item.ProductID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product ID: " + item.ProductID})
+			return
+		}
+
+		var product models.Product
+		err = h.ProductCollection.FindOne(ctx, bson.M{"_id": productID, "is_active": true}).Decode(&product)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found: " + item.ProductID})
+			return
+		}
+
+		if item.Quantity > product.Stock {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Insufficient stock for %s", product.Name)})
+			return
+		}
+
+		orderItems = append(orderItems, models.OrderItem{
+			ProductID: productID,
+			Quantity:  item.Quantity,
+			UnitPrice: product.Price,
+		})
+
+		totalAmount += float64(item.Quantity) * product.Price
+	}
+
+	order := models.Order{
+		CustomerID:  customer.ID,
+		CreatedBy:   Create_by,
+		Status:      "Pending",
+		TotalAmount: totalAmount,
+		Items:       orderItems,
+		CreatedAt:   time.Now(),
+	}
+
+	_, err = h.OrderCollection.InsertOne(ctx, order)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create order"})
+		return
+	}
+
 	for _, item := range input.Items {
 		productID, _ := primitive.ObjectIDFromHex(item.ProductID)
 		_, err := h.ProductCollection.UpdateOne(ctx,
