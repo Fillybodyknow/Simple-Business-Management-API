@@ -45,6 +45,8 @@ func SetRoutes(db *mongo.Client) *gin.Engine {
 		orderMiddleware.Use(middleware.AuthMiddleware())
 		{
 			orderMiddleware.POST("/", OrderHandle.CreateOrders)
+			orderMiddleware.GET("/", OrderHandle.GetOrders)
+			orderMiddleware.PUT("", OrderHandle.UpdateOrder)
 		}
 	}
 	PublicAPI := r.Group("/api/public")
