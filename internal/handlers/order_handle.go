@@ -95,8 +95,8 @@ func (h *OrderHandle) CreateOrders(c *gin.Context) {
 			return
 		}
 
-		var product models.Product
-		_, err = h.ProductRep.FindByID(ctx, productID, true)
+		var product *models.Product
+		product, err = h.ProductRep.FindByID(ctx, productID, true)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found: " + item.ProductID})
 			return
@@ -135,7 +135,7 @@ func (h *OrderHandle) CreateOrders(c *gin.Context) {
 
 	for _, item := range input.Items {
 		productID, _ := primitive.ObjectIDFromHex(item.ProductID)
-		err := h.ProductRep.UpdateStock(ctx, productID, item.Quantity)
+		err := h.ProductRep.UpdateStock(ctx, productID, -item.Quantity)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update stock"})
 			return
