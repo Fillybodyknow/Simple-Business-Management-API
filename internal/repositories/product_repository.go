@@ -12,7 +12,7 @@ import (
 
 type ProductRepositoryInterface interface {
 	FindAll(ctx context.Context) ([]models.Product, error)
-	FindByID(ctx context.Context, id string) (*models.Product, error)
+	FindByID(ctx context.Context, id primitive.ObjectID, is_active bool) (*models.Product, error)
 	Insert(ctx context.Context, product *models.Product) error
 	UpdateStock(ctx context.Context, id primitive.ObjectID, NewStock int) error
 	Update(ctx context.Context, id primitive.ObjectID, filter bson.M, role string, userID primitive.ObjectID) (*mongo.UpdateResult, error)
@@ -46,9 +46,9 @@ func (r *ProductRepository) FindAll(ctx context.Context) ([]models.Product, erro
 	return Products, nil
 }
 
-func (r *ProductRepository) FindByID(ctx context.Context, id string) (*models.Product, error) {
+func (r *ProductRepository) FindByID(ctx context.Context, id primitive.ObjectID, is_active bool) (*models.Product, error) {
 	var product models.Product
-	if err := r.Collection.FindOne(ctx, bson.M{"_id": id}).Decode(&product); err != nil {
+	if err := r.Collection.FindOne(ctx, bson.M{"_id": id, "is_active": is_active}).Decode(&product); err != nil {
 		return nil, err
 	}
 	return &product, nil
@@ -60,7 +60,7 @@ func (r *ProductRepository) Insert(ctx context.Context, product *models.Product)
 }
 
 func (r *ProductRepository) UpdateStock(ctx context.Context, id primitive.ObjectID, NewStock int) error {
-	_, err := r.Collection.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{"stock": NewStock}})
+	_, err := r.Collection.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$inc": bson.M{"stock": NewStock}})
 	return err
 }
 

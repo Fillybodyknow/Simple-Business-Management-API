@@ -23,7 +23,9 @@ func SetRoutes(db *mongo.Client) *gin.Engine {
 	CustomerCollection := db.Database("Simple-Business-Management").Collection("customers")
 	AuthHandle := handlers.NewAuthHandle(UserCollection)
 	productRepo := repositories.NewProductRepository(ProductCollection)
-	OrderHandle := handlers.NewOrderHandle((OrderCollection), (CustomerCollection), (ProductCollection))
+	orderRepo := repositories.NewOrderRepository(OrderCollection)
+	customerRepo := repositories.NewCustomerRepository(CustomerCollection)
+	OrderHandle := handlers.NewOrderHandle((orderRepo), (customerRepo), (productRepo))
 	productHandler := handlers.NewProductHandle(productRepo)
 	api := r.Group("/api")
 	{
@@ -50,13 +52,6 @@ func SetRoutes(db *mongo.Client) *gin.Engine {
 			orderMiddleware.GET("/", OrderHandle.GetOrders)
 			orderMiddleware.PUT("", OrderHandle.UpdateOrder)
 			orderMiddleware.DELETE("", OrderHandle.DeleteOrder)
-		}
-	}
-	PublicAPI := r.Group("/api/public")
-	{
-		Order := PublicAPI.Group("/order")
-		{
-			Order.POST("/", OrderHandle.CreatePublicOrder)
 		}
 	}
 
