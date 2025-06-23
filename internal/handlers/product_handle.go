@@ -7,9 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/simple-business-management-api/go-backend-api/internal/models"
+	"github.com/simple-business-management-api/go-backend-api/internal/repositories"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 type ProductRequest struct {
@@ -27,30 +27,23 @@ type UpdateProductRequest struct {
 	IsActive    bool    `json:"is_active" form:"is_active"`
 }
 type ProductHandle struct {
-	ProductCollection *mongo.Collection
+	ProductRepo repositories.ProductRepositoryInterface
 }
 
-func NewProductHandle(productCol *mongo.Collection) *ProductHandle {
-	return &ProductHandle{ProductCollection: productCol}
+func NewProductHandle(repo repositories.ProductRepositoryInterface) *ProductHandle {
+	return &ProductHandle{ProductRepo: repo}
 }
 
 func (h *ProductHandle) GetProducts(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	cursor, err := h.ProductCollection.Find(ctx, bson.M{})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-	}
-	defer cursor.Close(ctx)
-
 	var products []models.Product
-	for cursor.Next(ctx) {
-		var product models.Product
-		if err := cursor.Decode(&product); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decode product"})
-		}
-		products = append(products, product)
+
+	products, err := h.ProductRepo.FindAll(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -98,7 +91,13 @@ func (h *ProductHandle) CreateProduct(c *gin.Context) {
 		CreatedAt: time.Now(),
 	}
 
-	_, err = h.ProductCollection.InsertOne(ctx, product)
+	exist, _ := h.ProductRepo.ExistsBySKU(ctx, input.SKU)
+	if exist {
+		c.JSON(http.StatusConflict, gin.H{"error": "SKU already exists"})
+		return
+	}
+
+	err = h.ProductRepo.Insert(ctx, &product)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
@@ -112,8 +111,17 @@ func (h *ProductHandle) UpdateProduct(c *gin.Context) {
 	defer cancel()
 
 	roleVar, _ := c.Get("role")
-	if roleVar != "Admin" && roleVar != "Staff" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only staff/admin can update products"})
+
+	userIdVar, _ := c.Get("userId")
+	userIDStr, ok := userIdVar.(string)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID type"})
+		return
+	}
+
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
 		return
 	}
 
@@ -134,22 +142,25 @@ func (h *ProductHandle) UpdateProduct(c *gin.Context) {
 		return
 	}
 
-	update := bson.M{
-		"$set": bson.M{
-			"name":      input.ProductName,
-			"sku":       input.SKU,
-			"price":     input.Price,
-			"stock":     input.Stock,
-			"is_active": input.IsActive,
-		},
-	}
-
-	resulf, err := h.ProductCollection.UpdateOne(ctx, bson.M{"_id": productID}, update)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+	if exists, _ := h.ProductRepo.ExistsBySKU(ctx, input.SKU); exists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "SKU already exists"})
 		return
 	}
-	if resulf.MatchedCount == 0 {
+
+	updateFields := bson.M{
+		"name":      input.ProductName,
+		"sku":       input.SKU,
+		"price":     input.Price,
+		"stock":     input.Stock,
+		"is_active": input.IsActive,
+	}
+
+	result, err := h.ProductRepo.Update(ctx, productID, updateFields, roleVar.(string), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if result.MatchedCount == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
 		return
 	}
@@ -162,6 +173,18 @@ func (h *ProductHandle) DeleteProduct(c *gin.Context) {
 	defer cancel()
 
 	roleVar, _ := c.Get("role")
+	userIdVar, _ := c.Get("userId")
+	userIDStr, ok := userIdVar.(string)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID type"})
+		return
+	}
+
+	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
+		return
+	}
 	productIDStr := c.Query("id")
 	if productIDStr == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing product ID"})
@@ -174,50 +197,16 @@ func (h *ProductHandle) DeleteProduct(c *gin.Context) {
 		return
 	}
 
-	switch roleVar {
-	case "Staff":
-		userIdVar, _ := c.Get("userId")
-		userIDStr, ok := userIdVar.(string)
-		if !ok {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID type"})
-			return
-		}
-
-		userID, err := primitive.ObjectIDFromHex(userIDStr)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID format"})
-			return
-		}
-
-		filter := bson.M{"_id": productID, "created_by": userID}
-		result, err := h.ProductCollection.DeleteOne(ctx, filter)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-			return
-		}
-		if result.DeletedCount == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found or permission denied"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "Product deleted successfully"})
+	result, err := h.ProductRepo.Delete(ctx, productID, roleVar.(string), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
-
-	case "Admin":
-		result, err := h.ProductCollection.DeleteOne(ctx, bson.M{"_id": productID})
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-			return
-		}
-		if result.DeletedCount == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "Product deleted successfully"})
-		return
-
-	default:
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only staff/admin can delete products"})
 	}
+
+	if result.DeletedCount == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Product deleted successfully"})
 }

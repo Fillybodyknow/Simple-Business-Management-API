@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/simple-business-management-api/go-backend-api/internal/handlers"
 	"github.com/simple-business-management-api/go-backend-api/internal/middleware"
+	"github.com/simple-business-management-api/go-backend-api/internal/repositories"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -21,8 +22,11 @@ func SetRoutes(db *mongo.Client) *gin.Engine {
 	OrderCollection := db.Database("Simple-Business-Management").Collection("orders")
 	CustomerCollection := db.Database("Simple-Business-Management").Collection("customers")
 	AuthHandle := handlers.NewAuthHandle(UserCollection)
-	ProductHandle := handlers.NewProductHandle(ProductCollection)
-	OrderHandle := handlers.NewOrderHandle((OrderCollection), (CustomerCollection), (ProductCollection))
+	productRepo := repositories.NewProductRepository(ProductCollection)
+	orderRepo := repositories.NewOrderRepository(OrderCollection)
+	customerRepo := repositories.NewCustomerRepository(CustomerCollection)
+	OrderHandle := handlers.NewOrderHandle((orderRepo), (customerRepo), (productRepo))
+	productHandler := handlers.NewProductHandle(productRepo)
 	api := r.Group("/api")
 	{
 		auth := api.Group("/auth")
@@ -32,14 +36,14 @@ func SetRoutes(db *mongo.Client) *gin.Engine {
 		}
 		product := api.Group("/product")
 		{
-			product.GET("/", ProductHandle.GetProducts)
+			product.GET("/", productHandler.GetProducts)
 		}
 		productMiddleware := api.Group("/product")
 		productMiddleware.Use(middleware.AuthMiddleware())
 		{
-			productMiddleware.POST("/", ProductHandle.CreateProduct)
-			productMiddleware.PUT("", ProductHandle.UpdateProduct)
-			productMiddleware.DELETE("", ProductHandle.DeleteProduct)
+			productMiddleware.POST("/", productHandler.CreateProduct)
+			productMiddleware.PUT("", productHandler.UpdateProduct)
+			productMiddleware.DELETE("", productHandler.DeleteProduct)
 		}
 		orderMiddleware := api.Group("/order")
 		orderMiddleware.Use(middleware.AuthMiddleware())
@@ -48,13 +52,6 @@ func SetRoutes(db *mongo.Client) *gin.Engine {
 			orderMiddleware.GET("/", OrderHandle.GetOrders)
 			orderMiddleware.PUT("", OrderHandle.UpdateOrder)
 			orderMiddleware.DELETE("", OrderHandle.DeleteOrder)
-		}
-	}
-	PublicAPI := r.Group("/api/public")
-	{
-		Order := PublicAPI.Group("/order")
-		{
-			Order.POST("/", OrderHandle.CreatePublicOrder)
 		}
 	}
 

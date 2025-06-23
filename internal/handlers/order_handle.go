@@ -9,15 +9,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/simple-business-management-api/go-backend-api/internal/models"
 	"github.com/simple-business-management-api/go-backend-api/internal/pkg/utility"
+	"github.com/simple-business-management-api/go-backend-api/internal/repositories"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
 type OrderHandle struct {
-	OrderCollection    *mongo.Collection
-	CustomerCollection *mongo.Collection
-	ProductCollection  *mongo.Collection
+	OrderRep    repositories.OrderRepositoryInterface
+	ProductRep  repositories.ProductRepositoryInterface
+	CustomerRep repositories.CustomerRepositoryInterface
 }
 
 type OrderItemRequest struct {
@@ -39,96 +40,8 @@ type UpdateOrderRequest struct {
 	TrackingNumber string `json:"tracking_number" form:"tracking_number"`
 }
 
-func NewOrderHandle(orderCol *mongo.Collection, customerCol *mongo.Collection, productCol *mongo.Collection) *OrderHandle {
-	return &OrderHandle{OrderCollection: orderCol, CustomerCollection: customerCol, ProductCollection: productCol}
-}
-
-func (h *OrderHandle) CreatePublicOrder(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-
-	var input OrderRequest
-	if err := c.ShouldBind(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	var customer models.Customer
-	err := h.CustomerCollection.FindOne(ctx, bson.M{"email": input.CustomerEmail}).Decode(&customer)
-	if err == mongo.ErrNoDocuments {
-		customer = models.Customer{
-			FullName:  input.CustomerFullName,
-			Email:     input.CustomerEmail,
-			Phone:     input.CustomerPhone,
-			Address:   input.CustomerAddress,
-			CreatedAt: time.Now(),
-		}
-		result, err := h.CustomerCollection.InsertOne(ctx, customer)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create customer"})
-			return
-		}
-		customer.ID = result.InsertedID.(primitive.ObjectID)
-	}
-
-	var orderItems []models.OrderItem
-	var totalAmount float64
-
-	for _, item := range input.Items {
-		productID, err := primitive.ObjectIDFromHex(item.ProductID)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product ID: " + item.ProductID})
-			return
-		}
-
-		var product models.Product
-		err = h.ProductCollection.FindOne(ctx, bson.M{"_id": productID, "is_active": true}).Decode(&product)
-		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found: " + item.ProductID})
-			return
-		}
-
-		if item.Quantity > product.Stock {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Insufficient stock for %s", product.Name)})
-			return
-		}
-
-		orderItems = append(orderItems, models.OrderItem{
-			ProductID: productID,
-			Quantity:  item.Quantity,
-			UnitPrice: product.Price,
-		})
-
-		totalAmount += float64(item.Quantity) * product.Price
-	}
-
-	order := models.Order{
-		CustomerID:  customer.ID,
-		Status:      "Pending",
-		TotalAmount: totalAmount,
-		Items:       orderItems,
-		CreatedAt:   time.Now(),
-	}
-
-	_, err = h.OrderCollection.InsertOne(ctx, order)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create order"})
-		return
-	}
-
-	for _, item := range input.Items {
-		productID, _ := primitive.ObjectIDFromHex(item.ProductID)
-		_, err := h.ProductCollection.UpdateOne(ctx,
-			bson.M{"_id": productID},
-			bson.M{"$inc": bson.M{"stock": -item.Quantity}},
-		)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update stock"})
-			return
-		}
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"message": "Order placed successfully"})
+func NewOrderHandle(orderRepo repositories.OrderRepositoryInterface, customerRepo repositories.CustomerRepositoryInterface, productRepo repositories.ProductRepositoryInterface) *OrderHandle {
+	return &OrderHandle{OrderRep: orderRepo, CustomerRep: customerRepo, ProductRep: productRepo}
 }
 
 func (h *OrderHandle) CreateOrders(c *gin.Context) {
@@ -155,7 +68,7 @@ func (h *OrderHandle) CreateOrders(c *gin.Context) {
 	}
 
 	var customer models.Customer
-	err := h.CustomerCollection.FindOne(ctx, bson.M{"email": input.CustomerEmail}).Decode(&customer)
+	_, err := h.CustomerRep.FindByEmail(ctx, input.CustomerEmail, RoleVar.(string))
 	if err == mongo.ErrNoDocuments {
 		customer = models.Customer{
 			FullName:  input.CustomerFullName,
@@ -164,7 +77,7 @@ func (h *OrderHandle) CreateOrders(c *gin.Context) {
 			Address:   input.CustomerAddress,
 			CreatedAt: time.Now(),
 		}
-		result, err := h.CustomerCollection.InsertOne(ctx, customer)
+		result, err := h.CustomerRep.Insert(ctx, &customer, RoleVar.(string))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create customer"})
 			return
@@ -182,8 +95,8 @@ func (h *OrderHandle) CreateOrders(c *gin.Context) {
 			return
 		}
 
-		var product models.Product
-		err = h.ProductCollection.FindOne(ctx, bson.M{"_id": productID, "is_active": true}).Decode(&product)
+		var product *models.Product
+		product, err = h.ProductRep.FindByID(ctx, productID, true)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Product not found: " + item.ProductID})
 			return
@@ -214,7 +127,7 @@ func (h *OrderHandle) CreateOrders(c *gin.Context) {
 		Note:            "อยู่ระหว่างดําเนินการ",
 	}
 
-	_, err = h.OrderCollection.InsertOne(ctx, order)
+	err = h.OrderRep.Insert(ctx, &order, RoleVar.(string))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create order"})
 		return
@@ -222,10 +135,7 @@ func (h *OrderHandle) CreateOrders(c *gin.Context) {
 
 	for _, item := range input.Items {
 		productID, _ := primitive.ObjectIDFromHex(item.ProductID)
-		_, err := h.ProductCollection.UpdateOne(ctx,
-			bson.M{"_id": productID},
-			bson.M{"$inc": bson.M{"stock": -item.Quantity}},
-		)
+		err := h.ProductRep.UpdateStock(ctx, productID, -item.Quantity)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update stock"})
 			return
@@ -257,37 +167,11 @@ func (h *OrderHandle) GetOrders(c *gin.Context) {
 		return
 	}
 
-	userIDNull, err := primitive.ObjectIDFromHex("000000000000000000000000")
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID"})
-		return
-	}
-
 	roleVar, _ := c.Get("role")
 
-	filter := bson.M{}
-	if roleVar == "Staff" {
-		filter = bson.M{
-			"$or": []bson.M{
-				{"created_by": userID},
-				{"created_by": userIDNull},
-			},
-		}
-	} else if roleVar != "Admin" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized access"})
-		return
-	}
-
-	cursor, err := h.OrderCollection.Find(ctx, filter)
+	orders, err := h.OrderRep.FindAll(ctx, userID, roleVar.(string))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch orders"})
-		return
-	}
-	defer cursor.Close(ctx)
-
-	var orders []models.Order
-	if err = cursor.All(ctx, &orders); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decode orders"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -323,7 +207,7 @@ func (h *OrderHandle) UpdateOrder(c *gin.Context) {
 	}
 
 	var order models.Order
-	err = h.OrderCollection.FindOne(ctx, bson.M{"_id": orderIDHex}).Decode(&order)
+	_, err = h.OrderRep.FindByID(ctx, orderIDHex, roleVar.(string))
 	if err == mongo.ErrNoDocuments {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
 		return
@@ -347,7 +231,7 @@ func (h *OrderHandle) UpdateOrder(c *gin.Context) {
 		update["tracking_number"] = input.TrackingNumber
 	}
 
-	res, err := h.OrderCollection.UpdateOne(ctx, bson.M{"_id": orderIDHex}, bson.M{"$set": update})
+	res, err := h.OrderRep.Update(ctx, orderIDHex, update, roleVar.(string))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update order"})
 		return
@@ -393,18 +277,7 @@ func (h *OrderHandle) DeleteOrder(c *gin.Context) {
 		return
 	}
 
-	filter := bson.M{"_id": orderIDHex}
-	if roleVar == "Staff" {
-		filter["$or"] = []bson.M{
-			{"created_by": CreateBy},
-			{"created_by": bson.M{"$exists": false}},
-		}
-	} else if roleVar != "Admin" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized access"})
-		return
-	}
-
-	res, err := h.OrderCollection.DeleteOne(ctx, filter)
+	res, err := h.OrderRep.Delete(ctx, orderIDHex, CreateBy, roleVar.(string))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete order"})
 		return
